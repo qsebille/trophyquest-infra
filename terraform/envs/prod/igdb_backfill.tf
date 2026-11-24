@@ -1,6 +1,7 @@
+# Keep the existing Terraform addresses and AWS names when updating the deployed backfill.
 variable "screenshot_backfill_zip_path" {
   type        = string
-  default     = "../../../../trophyquest-igdb/out/screenshot-backfill.zip"
+  default     = "../../../../trophyquest-igdb/out/igdb-backfill.zip"
   description = "Path to the backfill ZIP, relative to the prod Terraform directory or absolute."
 }
 
@@ -72,7 +73,7 @@ resource "aws_iam_role_policy" "screenshot_backfill" {
 resource "aws_lambda_function" "screenshot_backfill" {
   function_name    = local.screenshot_backfill_name
   role             = aws_iam_role.screenshot_backfill.arn
-  handler          = "igdb_enricher.screenshot_backfill_handler.handler"
+  handler          = "igdb_enricher.backfill_handler.handler"
   runtime          = "python3.12"
   architectures    = ["arm64"]
   memory_size      = 256

@@ -61,30 +61,40 @@ published version explicitly before expecting that configuration on `prod`.
    image. Keep the schedule disabled until the smoke test and a GitHub release
    have passed.
 
-## IGDB screenshot backfill
+## IGDB backfill
 
-Build the ZIP with `bash scripts/package-screenshot-backfill.sh` from
-`trophyquest-igdb` in a Python environment with pip and the ZIP CLI. Run
-`terraform plan -out=screenshot-backfill.tfplan` from `terraform/envs/prod`.
-Terraform owns the ZIP, published version and `prod` alias. Invoke the alias
-manually.
+Build the ZIP with `bash scripts/package-backfill.sh` from `trophyquest-igdb`.
+Run `terraform plan` from `terraform/envs/prod`. Terraform owns the artifact,
+published version and `prod` alias. The existing function, secrets, operator
+role and Terraform addresses retain their screenshot-backfill names. For an
+existing deployment, check that the plan retains those resources while
+publishing the new package and handler.
 
-Before the first invocation, create a dedicated PostgreSQL login and run
-`screenshot_backfill_postgres_grants.sql` as a database administrator with
-`psql --set=backfill_role=trophyquest_screenshot_backfill` against the production
-database. Populate the PostgreSQL secret with `host`, `port`, `dbname`,
-`username` and `password`. Populate the Twitch secret with `client_id` and
-`client_secret`, or set `screenshot_backfill_twitch_secret_arn` before the first
-apply to reuse a secret in that format. A reused secret encrypted with a
-customer-managed KMS key also requires `kms:Decrypt` on that key.
+Run `igdb_backfill_postgres_grants.sql` as a database administrator with
+`psql --set=backfill_role=trophyquest_screenshot_backfill` to grant background
+access and revoke the retired screenshot grants. For a new deployment, first
+create the dedicated PostgreSQL login and populate its secret with `host`,
+`port`, `dbname`, `username` and `password`. Populate the Twitch secret with
+`client_id` and `client_secret`, or set `screenshot_backfill_twitch_secret_arn`
+to reuse an existing secret. A reused secret encrypted with a customer-managed
+KMS key also requires `kms:Decrypt` on that key.
 
-Verify the network path to PostgreSQL from a Lambda outside the VPC and
-outbound HTTPS to Secrets Manager, Twitch and IGDB. Assume the role from
-`screenshot_backfill_operator_role_arn` as `trophyquest-admin` to invoke the alias.
+Verify that the Lambda outside the VPC can reach PostgreSQL and make HTTPS
+requests to Secrets Manager, Twitch and IGDB. Assume the role from
+`screenshot_backfill_operator_role_arn` as `trophyquest-admin` to invoke the
+alias manually.
 
-Invoke `prod` synchronously with `{"game_ids":[1001]}`, using an actual matched
-IGDB game ID. Check the returned counts and the new rows in `igdb.screenshot`.
-Replaying the same payload should insert zero additional rows. To scan,
-start with `{"mode":"scan","limit":50}` and pass the returned
-`next_after_game_id` as `after_game_id` on the next invocation. Stop when
-the cursor is null. If a request fails, retry the same payload.
+1. Record the current `games_without_background` count in
+   `metadata.catalog_statistics`. Check for whitespace-only
+   `aws_background_url` values that mask an existing IGDB URL. If any exist,
+   normalize those empty S3 values to SQL `NULL` so the API can serve the
+   source and the uploader can queue it.
+2. Preview a matched IGDB game with
+   `{"operation":"backgrounds","game_ids":[1001]}`. Check the proposed URL and
+   confirm `games_updated` is zero. Add `"dry_run":false` for the pilot write.
+   Verify both the game and suite background before and after the image uploader
+   copies the source to S3.
+3. For a scan, use `{"operation":"backgrounds","mode":"scan","limit":50}`.
+   Set `"dry_run":false` to apply the scan, beginning at the first page.
+   Pass each returned `next_after_game_id` as `after_game_id` until it is null.
+   For a failed invocation, retry the same payload.
